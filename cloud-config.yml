@@ -1,0 +1,51 @@
+#cloud-config
+repo_update: true
+repo_upgrade: all
+
+write_files:
+  - path: /var/docker/docker-compose.yml
+    permissions: 0644
+    owner: root:root
+    content: |
+      version: "3.7"
+      services:
+        tenant1:
+          image: nginx:latest
+          container_name: tenant1
+          ports:
+            - "80:80"
+  - path: /tmp/docker.yaml
+    permissions: 0644
+    owner: root:root
+    content: |
+      init_config:
+
+      instances:
+          - url: "unix://var/run/docker.sock"
+            collect_events: true
+            new_tag_names: true
+            collect_container_size: true
+            collect_exit_codes: true
+            tags: ["env:testing", "tenant1"]
+runcmd:
+  - [
+      sh,
+      -c,
+      'DD_API_KEY=<your key> bash -c "$(curl -L https://raw.githubusercontent.com/DataDog/datadog-agent/master/cmd/agent/install_script.sh)"',
+    ]
+  - sudo mv /tmp/docker.yaml /etc/datadog-agent/conf.d/docker.d/docker.yaml
+  - sudo systemctl start datadog-agent
+  - sudo systemctl enable datadog-agent
+  - [sh, -c, "amazon-linux-extras install -y docker"]
+  - sudo systemctl start docker
+  - sudo systemctl enable docker
+  - [sh, -c, "usermod -aG docker ec2-user"]
+  - [sh, -c, "usermod -aG docker dd-agent"]
+  - [
+      sh,
+      -c,
+      'curl -L "https://github.com/docker/compose/releases/download/1.23.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose',
+    ]
+  - [sh, -c, "chmod +x /usr/local/bin/docker-compose"]
+  - sudo chmod ec2-user:ec2-user /var/docker/docker-compose.yml
+  - [sh, -c, "docker-compose -f /var/docker/docker-compose.yml up -d"]
