@@ -9,11 +9,14 @@ write_files:
     content: |
       version: "3.7"
       services:
-        tenant1:
+        tenant:
           image: nginx:latest
-          container_name: tenant1
+          container_name: app-container
           ports:
             - "80:80"
+          labels:
+            qiita.comefigo.service: "app"
+  # datadog config for monitoring docker containers
   - path: /tmp/docker.yaml
     permissions: 0644
     owner: root:root
@@ -26,12 +29,28 @@ write_files:
             new_tag_names: true
             collect_container_size: true
             collect_exit_codes: true
-            tags: ["env:testing", "tenant1"]
+  # datadog config
+  - path: /tmp/datadog.yaml
+    permissions: 0644
+    owner: root:root
+    content: |
+      api_key: <datadog key>
+      tags:
+        - env:prd
+        - role:app
+        - tenant:datadog-app
+
+      collect_ec2_tags: true
+
+      logs_enabled: true
+
+      docker_labels_as_tags:
+        qiita.comefigo.service: app-service
 runcmd:
   - [
       sh,
       -c,
-      'DD_API_KEY=<your key> bash -c "$(curl -L https://raw.githubusercontent.com/DataDog/datadog-agent/master/cmd/agent/install_script.sh)"',
+      'DD_API_KEY=<datadog key> bash -c "$(curl -L https://raw.githubusercontent.com/DataDog/datadog-agent/master/cmd/agent/install_script.sh)"',
     ]
   - sudo systemctl start datadog-agent
   - sudo systemctl enable datadog-agent
@@ -46,7 +65,10 @@ runcmd:
       'curl -L "https://github.com/docker/compose/releases/download/1.23.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose',
     ]
   - [sh, -c, "chmod +x /usr/local/bin/docker-compose"]
-  - sudo chmod ec2-user:ec2-user /var/docker/docker-compose.yml
+  - sudo chmod ec2-user:ec2-user -R /var/docker
   - [sh, -c, "docker-compose -f /var/docker/docker-compose.yml up -d"]
   - sudo mv /tmp/docker.yaml /etc/datadog-agent/conf.d/docker.d/docker.yaml
+  - sudo mv /tmp/datadog.yaml /etc/datadog-agent/datadog.yaml
+  - sudo chown dd-agent:dd-agent /etc/datadog-agent/conf.d/docker.d/docker.yaml
+  - sudo chown dd-agent:dd-agent /etc/datadog-agent/datadog.yaml
   - sudo systemctl restart datadog-agent
