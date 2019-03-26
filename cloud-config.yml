@@ -3,19 +3,151 @@ repo_update: true
 repo_upgrade: all
 
 write_files:
+  # Sample APP Docker compose file
   - path: /var/docker/docker-compose.yml
     permissions: 0644
     owner: root:root
     content: |
       version: "3.7"
       services:
-        tenant:
+        web:
           image: nginx:latest
-          container_name: app-container
+          container_name: web-container
           ports:
             - "80:80"
           labels:
+            qiita.comefigo.service: "web"
+          volumes:
+            - ./web/default.conf:/etc/nginx/conf.d/default.conf
+            - ./web/log:/var/log/nginx
+          depends_on:
+            - app
+        app:
+          build:
+            context: ./app
+            dockerfile: Dockerfile
+          image: app
+          container_name: app-container
+          labels:
             qiita.comefigo.service: "app"
+          depends_on:
+            - db
+        db:
+          image: redis:4
+          container_name: db-container
+          labels:
+            qiita.comefigo.service: "db"
+  # Sample APP app.js
+  - path: /var/docker/app/app.js
+    permissions: 0644
+    owner: root:root
+    content: |
+      const tracer = require("dd-trace").init();
+      const http = require("http");
+      const redis = require("redis");
+      const async = require("async");
+
+      const redisClient = redis.createClient({
+        host: "db",
+        port: 6379
+      });
+      redisClient.on("error", function(err) {
+        console.log("error");
+        console.log(err);
+      });
+
+      // サンプルデータの投入
+      redisClient.set("data1", "hello world 1");
+      redisClient.set("data2", "hello world 2");
+
+      const handleRequest = function(request, response) {
+        let resp = "";
+        async.parallel(
+          [
+            function(callback) {
+              redisClient.get("data1", function(error, value) {
+                callback(null, value);
+              });
+            },
+            function(callback) {
+              redisClient.get("data2", function(error, value) {
+                callback(null, value);
+              });
+            }
+          ],
+          function(err, results) {
+            for (let i = 0; i < results.length; i++) {
+              resp += "<ul> " + results[i] + " </ul>";
+            }
+            response.writeHead(200);
+            return response.end("<h1>redis value:</h1><br/>" + resp);
+          }
+        );
+      };
+
+      const www = http.createServer(handleRequest);
+      www.listen(3000);
+  # Sample APP package.json
+  - path: /var/docker/app/package.json
+    permissions: 0644
+    owner: root:root
+    content: |
+      {
+        "name": "datadog-trial-app",
+        "version": "1.0.0",
+        "description": "A simple Node.js app for Datadog trial",
+        "main": "app.js",
+        "dependencies": {
+          "async": "^2.6.2",
+          "dd-trace": "^0.10.2",
+          "redis": "^2.8.0"
+        },
+        "devDependencies": {},
+        "scripts": {
+          "test": "echo \"Error: no test specified\" && exit 1"
+        },
+        "keywords": [
+          "Datadog",
+          "APM"
+        ],
+        "author": "comefigo",
+        "license": "ISC"
+      }
+  # Sample APP Dockerfile
+  - path: /var/docker/app/Dockerfile
+    permissions: 0644
+    owner: root:root
+    content: |
+      FROM node:8
+      ADD ./package.json /app/package.json
+      WORKDIR /app
+      RUN npm install
+      ADD ./app.js /app/app.js
+      CMD node ./app.js
+  - path: /var/docker/web/default.conf
+    permissions: 0644
+    owner: root:root
+    content: |
+      server {
+        listen       80;
+        server_name  localhost;
+
+        access_log  /var/log/nginx/host.access.log  main;
+
+        location / {
+            proxy_pass http://app:3000;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection 'upgrade';
+            proxy_set_header Host $host;
+            proxy_cache_bypass $http_upgrade;
+        }
+
+        error_page   500 502 503 504  /50x.html;
+        location = /50x.html {
+            root   /usr/share/nginx/html;
+        }
+      }
   # datadog config for monitoring docker containers
   - path: /tmp/docker.yaml
     permissions: 0644
@@ -23,12 +155,24 @@ write_files:
     content: |
       init_config:
 
+      # docker socket経由でDockerの監視
       instances:
           - url: "unix://var/run/docker.sock"
             collect_events: true
             new_tag_names: true
             collect_container_size: true
             collect_exit_codes: true
+  # datadog config for monitoring nginx log
+  - path: /tmp/nginx.yaml
+    permissions: 0644
+    owner: root:root
+    content: |
+      logs:
+        - type: file
+          service: sample_service
+          path: /var/docker/web/log/host.access.log
+          source: nginx
+          sourcecategory: http_web_access
   # datadog config
   - path: /tmp/datadog.yaml
     permissions: 0644
@@ -40,12 +184,25 @@ write_files:
         - role:app
         - tenant:datadog-app
 
+      # EC2のタグを利用する
+      # ただし、Nameタグは利用されない
       collect_ec2_tags: true
 
+      # ログ収集を有効
+      # 各種ログの設定は別途必要
       logs_enabled: true
 
+      # container labelを別名のタグ名に変換
       docker_labels_as_tags:
-        qiita.comefigo.service: app-service
+        qiita.comefigo.service: service
+
+      # プロセスの監視
+      process_config:
+        enabled: "true"
+
+     # APM
+     apm_config:
+       enabled: true
 runcmd:
   - [
       sh,
@@ -65,10 +222,13 @@ runcmd:
       'curl -L "https://github.com/docker/compose/releases/download/1.23.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose',
     ]
   - [sh, -c, "chmod +x /usr/local/bin/docker-compose"]
-  - sudo chmod ec2-user:ec2-user -R /var/docker
+  - [sh, -c, "mkdir -p /var/docker/web/log"]
+  - sudo chown ec2-user:ec2-user -R /var/docker
   - [sh, -c, "docker-compose -f /var/docker/docker-compose.yml up -d"]
   - sudo mv /tmp/docker.yaml /etc/datadog-agent/conf.d/docker.d/docker.yaml
-  - sudo mv /tmp/datadog.yaml /etc/datadog-agent/datadog.yaml
   - sudo chown dd-agent:dd-agent /etc/datadog-agent/conf.d/docker.d/docker.yaml
+  - sudo mv /tmp/nginx.yaml /etc/datadog-agent/conf.d/nginx.d/nginx.yaml
+  - sudo chown dd-agent:dd-agent /etc/datadog-agent/conf.d/nginx.d/nginx.yaml
+  - sudo mv /tmp/datadog.yaml /etc/datadog-agent/datadog.yaml
   - sudo chown dd-agent:dd-agent /etc/datadog-agent/datadog.yaml
   - sudo systemctl restart datadog-agent

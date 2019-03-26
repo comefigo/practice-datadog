@@ -1,0 +1,9 @@
+init_config:
+
+# docker socket経由でDockerの監視
+instances:
+  - url: "unix://var/run/docker.sock"
+    collect_events: true
+    new_tag_names: true
+    collect_container_size: true
+    collect_exit_codes: true

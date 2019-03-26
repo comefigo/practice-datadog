@@ -1,0 +1,25 @@
+api_key: <datadog key>
+tags:
+  - env:prd
+  - role:app
+  - tenant:datadog-app
+
+# EC2のタグを利用する
+# ただし、Nameタグは利用されない
+collect_ec2_tags: true
+
+# ログ収集を有効
+# 各種ログの設定は別途必要
+logs_enabled: true
+
+# container labelを別名のタグ名に変換
+docker_labels_as_tags:
+  qiita.comefigo.service: service
+
+# プロセスの監視
+process_config:
+  enabled: "true"
+
+# APM
+apm_config:
+  enabled: true

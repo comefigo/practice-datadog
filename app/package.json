@@ -1,0 +1,21 @@
+{
+  "name": "datadog-trial-app",
+  "version": "1.0.0",
+  "description": "A simple Node.js app for Datadog trial",
+  "main": "app.js",
+  "dependencies": {
+    "async": "^2.6.2",
+    "dd-trace": "^0.10.2",
+    "redis": "^2.8.0"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "Datadog",
+    "APM"
+  ],
+  "author": "comefigo",
+  "license": "ISC"
+}
